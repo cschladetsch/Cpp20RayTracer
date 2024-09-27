@@ -1,9 +1,10 @@
-# C++ Raytracer with Progress Spinner
+# C++20 Raytracer with Progress Spinner
 
-This project is a simple raytracer implemented in C++ that generates a 3D scene with spheres, reflections, and lighting. It includes a progress spinner to show rendering progress and estimated time remaining.
+This project is a modern C++20 raytracer that generates a 3D scene with spheres, reflections, and lighting. It includes a progress spinner to show rendering progress and estimated time remaining.
 
 ## Features
 
+- Implemented in C++20
 - Ray tracing with reflections and specular highlights
 - Soft shadows for more realistic lighting
 - Checkerboard ground plane
@@ -15,24 +16,48 @@ This project is a simple raytracer implemented in C++ that generates a 3D scene 
 
 To build and run this project, you need:
 
-- A C++17 compliant compiler (e.g., GCC 7+ or Clang 5+)
+- A C++20 compliant compiler (e.g., GCC 10+, Clang 10+, or MSVC 2019+)
 - OpenMP for parallel processing
-- [stb_image_write.h](https://github.com/nothings/stb/blob/master/stb_image_write.h) (single-file library for writing images)
+- stb_image_write.h (included in the project)
+
+## Getting Dependencies
+
+1. **Compiler**: 
+   - On Ubuntu/Debian: `sudo apt-get install g++-10`
+   - On macOS with Homebrew: `brew install gcc`
+   - On Windows: Install the latest Visual Studio with C++ support
+
+2. **OpenMP**:
+   - On Ubuntu/Debian: It's usually included with GCC
+   - On macOS: It's included with GCC from Homebrew
+   - On Windows: It's included with Visual Studio
+
+3. **stb_image_write.h**:
+   This single-file library is already included in the project. However, if you want to update it to the latest version, you can run:
+   ```
+   curl -O https://raw.githubusercontent.com/nothings/stb/master/stb_image_write.h
+   ```
+   Run this command in your project directory to download the latest version of the header file.
 
 ## Building the Project
 
-1. Make sure you have the `stb_image_write.h` file in the same directory as the `raytracer.cpp` file.
+1. All dependencies, including `stb_image_write.h`, are already in your project directory.
 
 2. Compile the project using the following command:
 
    For GCC:
    ```
-   g++ -std=c++17 -O3 -fopenmp raytracer.cpp -o raytracer
+   g++-10 -std=c++20 -O3 -fopenmp raytracer.cpp -o raytracer
    ```
 
    For Clang:
    ```
-   clang++ -std=c++17 -O3 -fopenmp raytracer.cpp -o raytracer
+   clang++ -std=c++20 -O3 -fopenmp raytracer.cpp -o raytracer
+   ```
+
+   For MSVC (in Developer Command Prompt):
+   ```
+   cl /std:c++20 /O2 /openmp raytracer.cpp
    ```
 
 ## Usage
