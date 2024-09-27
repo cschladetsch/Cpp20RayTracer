@@ -3,6 +3,7 @@
 #include <cmath>
 #include <limits>
 #include <algorithm>
+#include <random>
 #include <fstream>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -13,6 +14,7 @@ struct Vec3 {
     Vec3(double x = 0, double y = 0, double z = 0) : x(x), y(y), z(z) {}
     Vec3 operator+(const Vec3& v) const { return Vec3(x + v.x, y + v.y, z + v.z); }
     Vec3 operator-(const Vec3& v) const { return Vec3(x - v.x, y - v.y, z - v.z); }
+    Vec3 operator-() const { return Vec3(-x, -y, -z); } // Add this line
     Vec3 operator*(double d) const { return Vec3(x * d, y * d, z * d); }
     Vec3 operator*(const Vec3& v) const { return Vec3(x * v.x, y * v.y, z * v.z); }
     Vec3 normalize() const {
@@ -24,18 +26,31 @@ struct Vec3 {
         return Vec3(y * v.z - z * v.y, z * v.x - x * v.z, x * v.y - y * v.x);
     }
 };
-
 struct Ray {
     Vec3 origin, direction;
     Ray(const Vec3& origin, const Vec3& direction) : origin(origin), direction(direction) {}
 };
 
+struct Light {
+    Vec3 position;
+    Vec3 color;
+    double intensity;
+    double radius;  // For soft shadows
+};
+
+class Material {
+public:
+    Vec3 color;
+    double reflectivity;
+    double specularity;
+    Material(const Vec3& c, double r, double s) : color(c), reflectivity(r), specularity(s) {}
+};
+
 struct Sphere {
     Vec3 center;
     double radius;
-    Vec3 color;
-    bool reflective;
-    Sphere(const Vec3& c, double r, const Vec3& col, bool refl) : center(c), radius(r), color(col), reflective(refl) {}
+    Material material;
+    Sphere(const Vec3& c, double r, const Material& m) : center(c), radius(r), material(m) {}
     bool intersect(const Ray& ray, double& t) const {
         Vec3 oc = ray.origin - center;
         double b = oc.dot(ray.direction);
@@ -67,7 +82,60 @@ bool check_ground_intersection(const Ray& ray, double& t) {
     return false;
 }
 
-Vec3 get_color(const Ray& ray, const std::vector<Sphere>& spheres, int bounces) {
+Vec3 soft_shadow(const Vec3& point, const Vec3& normal, const Light& light, const std::vector<Sphere>& spheres, int samples) {
+    Vec3 shadow(0, 0, 0);
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<> dis(0.0, 1.0);
+    
+    for (int i = 0; i < samples; ++i) {
+        double u = dis(gen);
+        double v = dis(gen);
+        double theta = 2 * M_PI * u;
+        double phi = acos(2 * v - 1);
+        Vec3 light_point = light.position + Vec3(light.radius * sin(phi) * cos(theta),
+                                                 light.radius * sin(phi) * sin(theta),
+                                                 light.radius * cos(phi));
+        
+        Vec3 light_dir = (light_point - point).normalize();
+        Ray shadow_ray(point + normal * 0.001, light_dir);
+        
+        bool in_shadow = false;
+        for (const auto& sphere : spheres) {
+            double t;
+            if (sphere.intersect(shadow_ray, t) && t > 0.001) {
+                in_shadow = true;
+                break;
+            }
+        }
+        
+        if (!in_shadow) {
+            shadow = shadow + Vec3(1, 1, 1);
+        }
+    }
+    
+    return shadow * (1.0 / samples);
+}
+
+Vec3 calculate_lighting(const Vec3& point, const Vec3& normal, const Vec3& view_dir, 
+                        const Material& material, const std::vector<Light>& lights,
+                        const std::vector<Sphere>& spheres) {
+    Vec3 color(0, 0, 0);
+    for (const auto& light : lights) {
+        Vec3 light_dir = (light.position - point).normalize();
+        
+        Vec3 shadow_factor = soft_shadow(point, normal, light, spheres, 16);
+        
+        double diffuse = std::max(0.0, normal.dot(light_dir));
+        Vec3 reflect_dir = (normal * 2 * normal.dot(light_dir) - light_dir).normalize();
+        double specular = std::pow(std::max(0.0, view_dir.dot(reflect_dir)), material.specularity);
+        
+        color = color + material.color * light.color * light.intensity * (diffuse + specular) * shadow_factor;
+    }
+    return color;
+}
+
+Vec3 get_color(const Ray& ray, const std::vector<Sphere>& spheres, const std::vector<Light>& lights, int bounces) {
     if (bounces <= 0) return sky_color(ray);
 
     double closest_t = std::numeric_limits<double>::infinity();
@@ -86,36 +154,35 @@ Vec3 get_color(const Ray& ray, const std::vector<Sphere>& spheres, int bounces) 
     if (hit_sphere && (!hit_ground || closest_t < t_ground)) {
         Vec3 hit_point = ray.origin + ray.direction * closest_t;
         Vec3 normal = (hit_point - hit_sphere->center).normalize();
+        Vec3 view_dir = -ray.direction;
         
-        if (hit_sphere->reflective) {
-            Vec3 reflected = (ray.direction - normal * 2 * ray.direction.dot(normal)).normalize();
-            return get_color(Ray(hit_point + normal * 0.001, reflected), spheres, bounces - 1);
-        } else {
-            double diffuse = std::max(0.0, normal.dot(Vec3(0, 1, 0)));
-            return hit_sphere->color * diffuse;
+        Vec3 direct_color = calculate_lighting(hit_point, normal, view_dir, hit_sphere->material, lights, spheres);
+        
+        if (hit_sphere->material.reflectivity > 0) {
+            Vec3 reflect_dir = (ray.direction - normal * 2 * ray.direction.dot(normal)).normalize();
+            Ray reflect_ray(hit_point + normal * 0.001, reflect_dir);
+            Vec3 reflect_color = get_color(reflect_ray, spheres, lights, bounces - 1);
+            return direct_color * (1 - hit_sphere->material.reflectivity) + reflect_color * hit_sphere->material.reflectivity;
         }
+        
+        return direct_color;
     }
 
     if (hit_ground) {
         Vec3 hit_point = ray.origin + ray.direction * t_ground;
         int check_x = static_cast<int>(std::floor(hit_point.x)) % 2;
         int check_z = static_cast<int>(std::floor(hit_point.z)) % 2;
-        if ((check_x + check_z) % 2 == 0) {
-            return Vec3(0.8, 0.8, 0.8);  // Light square
-        } else {
-            return Vec3(0.3, 0.3, 0.3);  // Dark square
-        }
+        Vec3 ground_color = (check_x + check_z) % 2 == 0 ? Vec3(0.8, 0.8, 0.8) : Vec3(0.3, 0.3, 0.3);
+        return calculate_lighting(hit_point, Vec3(0, 1, 0), -ray.direction, Material(ground_color, 0, 10), lights, spheres);
     }
 
     return sky_color(ray);
 }
 int main(int argc, char* argv[]) {
-    if (argc != 2) {
-        std::cerr << "Usage: " << argv[0] << " <number_of_bounces>" << std::endl;
-        return 1;
+    int max_bounces = 10;
+    if (argc > 1) {
+        max_bounces = std::stoi(argv[1]);
     }
-
-    int max_bounces = std::stoi(argv[1]);
 
     const int width = 800;
     const int height = 600;
@@ -123,26 +190,49 @@ int main(int argc, char* argv[]) {
 
     std::vector<unsigned char> image(width * height * 3);
 
+    // Camera setup with more realistic FOV
+    double fov = 60.0; // Field of view in degrees
+    double focal_length = 1.0;
+    double viewport_height = 2.0 * focal_length * tan(fov * 0.5 * M_PI / 180.0);
+    double viewport_width = viewport_height * aspect_ratio;
+
     Vec3 camera_pos(0, 2, -5);
     Vec3 camera_dir = Vec3(0, 0, 1).normalize();
     Vec3 camera_up = Vec3(0, 1, 0);
     Vec3 camera_right = camera_up.cross(camera_dir).normalize();
 
     std::vector<Sphere> spheres = {
-        Sphere(Vec3(0, 1, 0), 2, Vec3(1, 0, 0), true),    // Large red reflective sphere
-        Sphere(Vec3(-2.5, 0.5, 2), 0.5, Vec3(0, 1, 0), false), // Smaller green non-reflective sphere
-        Sphere(Vec3(2.5, 0.5, -2), 0.5, Vec3(0, 0, 1), true)   // Smaller blue reflective sphere
+        Sphere(Vec3(0, 1, 0), 1, Material(Vec3(0.7, 0.3, 0.3), 0.8, 50)),
+        Sphere(Vec3(-2.5, 0.5, 2), 0.5, Material(Vec3(0.3, 0.7, 0.3), 0.3, 10)),
+        Sphere(Vec3(2.5, 0.5, -2), 0.5, Material(Vec3(0.3, 0.3, 0.7), 0.5, 30)),
+        // Additional spheres
+        Sphere(Vec3(-1.5, 0.3, -1), 0.3, Material(Vec3(0.9, 0.8, 0.2), 0.1, 5)),
+        Sphere(Vec3(1.5, 0.3, 1), 0.3, Material(Vec3(0.2, 0.8, 0.9), 0.6, 40)),
+        Sphere(Vec3(0, 0.2, 2), 0.2, Material(Vec3(0.8, 0.2, 0.8), 0.7, 60)),
+        Sphere(Vec3(-1, 0.2, 3), 0.2, Material(Vec3(0.1, 0.9, 0.1), 0.4, 20)),
+        Sphere(Vec3(1, 0.2, 3), 0.2, Material(Vec3(0.9, 0.1, 0.1), 0.2, 15))
     };
 
+    std::vector<Light> lights = {
+        Light{Vec3(-5, 5, -5), Vec3(1, 1, 1), 1.0, 0.2},
+        Light{Vec3(5, 3, -3), Vec3(0.8, 0.8, 1), 0.8, 0.1},
+        // Additional light
+        Light{Vec3(0, 5, 5), Vec3(1, 0.9, 0.8), 0.6, 0.15}
+    };
+
+    #pragma omp parallel for
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             double u = (x + 0.5) / width * 2 - 1;
             double v = -((y + 0.5) / height * 2 - 1);
 
-            Vec3 ray_dir = camera_dir + camera_right * u * aspect_ratio + camera_up * v;
+            Vec3 ray_dir = camera_dir * focal_length +
+                           camera_right * (u * viewport_width * 0.5) +
+                           camera_up * (v * viewport_height * 0.5);
+
             Ray ray(camera_pos, ray_dir.normalize());
 
-            Vec3 color = get_color(ray, spheres, max_bounces);
+            Vec3 color = get_color(ray, spheres, lights, max_bounces);
 
             int index = (y * width + x) * 3;
             image[index] = static_cast<unsigned char>(std::min(color.x * 255.0, 255.0));
