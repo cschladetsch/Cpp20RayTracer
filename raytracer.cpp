@@ -5,9 +5,70 @@
 #include <algorithm>
 #include <random>
 #include <fstream>
+#include <chrono>
+#include <thread>
+#include <atomic>
+#include <iomanip>
+#include <sstream>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
+
+class ProgressSpinner {
+public:
+    ProgressSpinner(int total_rows) : total_rows(total_rows), current_row(0), running(true) {}
+
+    void start() {
+        spinner_thread = std::jthread([this] { run(); });
+    }
+
+    void stop() {
+        running = false;
+        if (spinner_thread.joinable()) {
+            spinner_thread.join();
+        }
+    }
+
+    void update(int row) {
+        current_row.store(row, std::memory_order_relaxed);
+    }
+
+private:
+    void run() {
+        const std::string spinner = "|/-\\";
+        int spinner_index = 0;
+        auto start_time = std::chrono::steady_clock::now();
+
+        while (running) {
+            int current = current_row.load(std::memory_order_relaxed);
+            double progress = static_cast<double>(current) / total_rows;
+            auto current_time = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(current_time - start_time);
+            auto estimated_total = static_cast<long long>(elapsed.count() / progress);
+            auto remaining = estimated_total - elapsed.count();
+
+            std::ostringstream oss;
+            oss << "\rProgress: [" << std::fixed << std::setprecision(1) << (progress * 100) << "%] "
+                << spinner[spinner_index]
+                << " Time elapsed: " << std::setfill('0') << std::setw(2) << (elapsed.count() / 3600) << ":"
+                << std::setfill('0') << std::setw(2) << ((elapsed.count() % 3600) / 60) << ":"
+                << std::setfill('0') << std::setw(2) << (elapsed.count() % 60)
+                << " ETA: " << std::setfill('0') << std::setw(2) << (remaining / 3600) << ":"
+                << std::setfill('0') << std::setw(2) << ((remaining % 3600) / 60) << ":"
+                << std::setfill('0') << std::setw(2) << (remaining % 60);
+
+            std::cout << oss.str() << std::flush;
+
+            spinner_index = (spinner_index + 1) % spinner.length();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
+
+    int total_rows;
+    std::atomic<int> current_row;
+    std::atomic<bool> running;
+    std::jthread spinner_thread;
+};
 
 struct Vec3 {
     double x, y, z;
@@ -178,6 +239,7 @@ Vec3 get_color(const Ray& ray, const std::vector<Sphere>& spheres, const std::ve
 
     return sky_color(ray);
 }
+
 int main(int argc, char* argv[]) {
     int max_bounces = 10;
     if (argc > 1) {
@@ -220,6 +282,9 @@ int main(int argc, char* argv[]) {
         Light{Vec3(0, 5, 5), Vec3(1, 0.9, 0.8), 0.6, 0.15}
     };
 
+    ProgressSpinner spinner(height);
+    spinner.start();
+
     #pragma omp parallel for
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
@@ -239,10 +304,13 @@ int main(int argc, char* argv[]) {
             image[index + 1] = static_cast<unsigned char>(std::min(color.y * 255.0, 255.0));
             image[index + 2] = static_cast<unsigned char>(std::min(color.z * 255.0, 255.0));
         }
+        spinner.update(y + 1);
     }
 
+    spinner.stop();
+
     stbi_write_png("output.png", width, height, 3, image.data(), width * 3);
-    std::cout << "Image saved as output.png" << std::endl;
+    std::cout << "\nImage saved as output.png" << std::endl;
 
     return 0;
 }
