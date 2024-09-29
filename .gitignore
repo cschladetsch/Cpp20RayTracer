@@ -1,4 +1,11 @@
-/output.png
+*.png
+*.bmp
+*.ppm
+
+/build
 /raytracer
+
+/q
+
 
 
