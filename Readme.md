@@ -2,6 +2,10 @@
 
 This project is a modern C++20 raytracer that generates a 3D scene with spheres, reflections, and lighting. It includes a progress spinner to show rendering progress and estimated time remaining.
 
+## Sample
+
+![image](resources/output.png)
+
 ## Features
 
 - Implemented in C++20
